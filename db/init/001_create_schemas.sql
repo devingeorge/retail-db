@@ -1,0 +1,3 @@
+CREATE SCHEMA IF NOT EXISTS retail_core;
+CREATE SCHEMA IF NOT EXISTS retail_sales;
+CREATE SCHEMA IF NOT EXISTS retail_analytics;
