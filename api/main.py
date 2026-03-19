@@ -1,4 +1,6 @@
 import os
+from datetime import datetime
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -51,17 +53,83 @@ class SchemaCreateRequest(BaseModel):
     name: str = Field(..., pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
-@app.get("/health", summary="Health check")
-def health() -> dict:
-    return {"status": "ok"}
+class HealthResponse(BaseModel):
+    status: str
+
+
+class SchemasResponse(BaseModel):
+    schemas: list[str]
+
+
+class SchemaTablesResponse(BaseModel):
+    schema: str
+    tables: list[str]
+
+
+class SchemaCreateResponse(BaseModel):
+    created: str
+
+
+class CustomerProfileResponse(BaseModel):
+    customer_id: int
+    loyalty_id: str
+    email: str
+    first_name: str
+    last_name: str
+    tier: str
+    preferred_store_id: int | None
+    preferred_sizes: list[str]
+    preferred_colors: list[str]
+    preferred_brands: list[str]
+    shopping_occasions: list[str]
+    recent_purchases: list[dict[str, Any]]
+    saved_items: list[dict[str, Any]]
+    return_history_summary: dict[str, Any]
+    stylist_notes: str
+    lifetime_value_band: str
+
+
+class RecentPurchasesResponse(BaseModel):
+    customer_id: int
+    last_purchase_ts: datetime | None
+    recent_purchases: list[dict[str, Any]]
+
+
+class SavedItemsResponse(BaseModel):
+    customer_id: int
+    saved_item_count: int
+    saved_items: list[dict[str, Any]]
+
+
+class ReturnSummaryResponse(BaseModel):
+    customer_id: int
+    total_returns: int
+    avg_refund_amount: float | None
+    total_refund_amount: float | None
+    return_history_summary: dict[str, Any]
+
+
+class LifetimeValueBandItem(BaseModel):
+    lifetime_value_band: str
+    customer_count: int
+
+
+class LifetimeValueBandsResponse(BaseModel):
+    bands: list[LifetimeValueBandItem]
+
+
+@app.get("/health", summary="Health check", response_model=HealthResponse)
+def health() -> HealthResponse:
+    return HealthResponse(status="ok")
 
 
 @app.get(
     "/schemas",
     dependencies=[Depends(require_api_key)],
     summary="List available database schemas",
+    response_model=SchemasResponse,
 )
-def list_schemas() -> dict:
+def list_schemas() -> SchemasResponse:
     query = text(
         """
         SELECT schema_name
@@ -74,15 +142,16 @@ def list_schemas() -> dict:
     with engine.connect() as conn:
         rows = conn.execute(query).all()
 
-    return {"schemas": [row[0] for row in rows]}
+    return SchemasResponse(schemas=[row[0] for row in rows])
 
 
 @app.get(
     "/schemas/{schema_name}/tables",
     dependencies=[Depends(require_api_key)],
     summary="List tables for a schema",
+    response_model=SchemaTablesResponse,
 )
-def list_tables(schema_name: str) -> dict:
+def list_tables(schema_name: str) -> SchemaTablesResponse:
     query = text(
         """
         SELECT table_name
@@ -96,15 +165,16 @@ def list_tables(schema_name: str) -> dict:
     with engine.connect() as conn:
         rows = conn.execute(query, {"schema_name": schema_name}).all()
 
-    return {"schema": schema_name, "tables": [row[0] for row in rows]}
+    return SchemaTablesResponse(schema=schema_name, tables=[row[0] for row in rows])
 
 
 @app.post(
     "/schemas",
     dependencies=[Depends(require_api_key)],
     summary="Create a new schema",
+    response_model=SchemaCreateResponse,
 )
-def create_schema(payload: SchemaCreateRequest) -> dict:
+def create_schema(payload: SchemaCreateRequest) -> SchemaCreateResponse:
     # Schema names cannot be parameterized as identifiers, so we validate strictly first.
     schema_name = payload.name
     query = text(f'CREATE SCHEMA IF NOT EXISTS "{schema_name}"')
@@ -112,7 +182,7 @@ def create_schema(payload: SchemaCreateRequest) -> dict:
     with engine.begin() as conn:
         conn.execute(query)
 
-    return {"created": schema_name}
+    return SchemaCreateResponse(created=schema_name)
 
 
 def _fetch_one_or_404(query_text: str, params: dict, not_found_message: str) -> dict:
@@ -128,9 +198,10 @@ def _fetch_one_or_404(query_text: str, params: dict, not_found_message: str) -> 
     "/customers/{customer_id}",
     dependencies=[Depends(require_api_key)],
     summary="Get full customer 360 profile by customer ID",
+    response_model=CustomerProfileResponse,
 )
-def get_customer_profile(customer_id: int) -> dict:
-    return _fetch_one_or_404(
+def get_customer_profile(customer_id: int) -> CustomerProfileResponse:
+    row = _fetch_one_or_404(
         """
         SELECT
             customer_id,
@@ -155,15 +226,17 @@ def get_customer_profile(customer_id: int) -> dict:
         {"customer_id": customer_id},
         "Customer not found.",
     )
+    return CustomerProfileResponse(**row)
 
 
 @app.get(
     "/customers/by-loyalty/{loyalty_id}",
     dependencies=[Depends(require_api_key)],
     summary="Get full customer 360 profile by loyalty ID",
+    response_model=CustomerProfileResponse,
 )
-def get_customer_profile_by_loyalty(loyalty_id: str) -> dict:
-    return _fetch_one_or_404(
+def get_customer_profile_by_loyalty(loyalty_id: str) -> CustomerProfileResponse:
+    row = _fetch_one_or_404(
         """
         SELECT
             customer_id,
@@ -188,15 +261,17 @@ def get_customer_profile_by_loyalty(loyalty_id: str) -> dict:
         {"loyalty_id": loyalty_id},
         "Customer not found.",
     )
+    return CustomerProfileResponse(**row)
 
 
 @app.get(
     "/customers/email/{email}",
     dependencies=[Depends(require_api_key)],
     summary="Get full customer 360 profile by email",
+    response_model=CustomerProfileResponse,
 )
-def get_customer_profile_by_email(email: str) -> dict:
-    return _fetch_one_or_404(
+def get_customer_profile_by_email(email: str) -> CustomerProfileResponse:
+    row = _fetch_one_or_404(
         """
         SELECT
             customer_id,
@@ -221,14 +296,16 @@ def get_customer_profile_by_email(email: str) -> dict:
         {"email": email},
         "Customer not found.",
     )
+    return CustomerProfileResponse(**row)
 
 
 @app.get(
     "/customers/{customer_id}/recent-purchases",
     dependencies=[Depends(require_api_key)],
     summary="Get a customer's recent purchases",
+    response_model=RecentPurchasesResponse,
 )
-def get_recent_purchases(customer_id: int) -> dict:
+def get_recent_purchases(customer_id: int) -> RecentPurchasesResponse:
     result = _fetch_one_or_404(
         """
         SELECT customer_id, last_purchase_ts, recent_purchases
@@ -238,15 +315,16 @@ def get_recent_purchases(customer_id: int) -> dict:
         {"customer_id": customer_id},
         "Recent purchases not found for customer.",
     )
-    return result
+    return RecentPurchasesResponse(**result)
 
 
 @app.get(
     "/customers/{customer_id}/saved-items",
     dependencies=[Depends(require_api_key)],
     summary="Get a customer's saved items summary",
+    response_model=SavedItemsResponse,
 )
-def get_saved_items(customer_id: int) -> dict:
+def get_saved_items(customer_id: int) -> SavedItemsResponse:
     result = _fetch_one_or_404(
         """
         SELECT customer_id, saved_item_count, saved_items
@@ -256,15 +334,16 @@ def get_saved_items(customer_id: int) -> dict:
         {"customer_id": customer_id},
         "Saved items not found for customer.",
     )
-    return result
+    return SavedItemsResponse(**result)
 
 
 @app.get(
     "/customers/{customer_id}/return-summary",
     dependencies=[Depends(require_api_key)],
     summary="Get a customer's return history summary",
+    response_model=ReturnSummaryResponse,
 )
-def get_return_summary(customer_id: int) -> dict:
+def get_return_summary(customer_id: int) -> ReturnSummaryResponse:
     result = _fetch_one_or_404(
         """
         SELECT
@@ -279,15 +358,16 @@ def get_return_summary(customer_id: int) -> dict:
         {"customer_id": customer_id},
         "Return history not found for customer.",
     )
-    return result
+    return ReturnSummaryResponse(**result)
 
 
 @app.get(
     "/analytics/lifetime-value-bands",
     dependencies=[Depends(require_api_key)],
     summary="Get customer counts by lifetime value band",
+    response_model=LifetimeValueBandsResponse,
 )
-def get_lifetime_value_band_breakdown() -> dict:
+def get_lifetime_value_band_breakdown() -> LifetimeValueBandsResponse:
     query = text(
         """
         SELECT lifetime_value_band, COUNT(*) AS customer_count
@@ -298,4 +378,6 @@ def get_lifetime_value_band_breakdown() -> dict:
     )
     with engine.connect() as conn:
         rows = conn.execute(query).mappings().all()
-    return {"bands": [dict(row) for row in rows]}
+    return LifetimeValueBandsResponse(
+        bands=[LifetimeValueBandItem(**dict(row)) for row in rows]
+    )
