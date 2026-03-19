@@ -8,6 +8,7 @@ This mapping documents where each requested field is stored for GPT Actions quer
 |---|---|
 | `customer_id` | `retail_core.customers.customer_id` |
 | `loyalty_id` | `retail_core.customers.loyalty_id` |
+| `email` | `retail_core.customers.email` |
 | `first_name` | `retail_core.customers.first_name` |
 | `last_name` | `retail_core.customers.last_name` |
 | `tier` | `retail_core.customers.tier` |

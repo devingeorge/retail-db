@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS retail_core.products (
 CREATE TABLE IF NOT EXISTS retail_core.customers (
     customer_id BIGINT PRIMARY KEY,
     loyalty_id TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL UNIQUE,
     first_name TEXT NOT NULL,
     last_name TEXT NOT NULL,
     tier TEXT NOT NULL CHECK (tier IN ('Bronze', 'Silver', 'Gold', 'Platinum')),

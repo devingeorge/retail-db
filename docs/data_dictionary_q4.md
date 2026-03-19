@@ -21,7 +21,7 @@
   - Keys: `product_id`.
 - `retail_core.customers`
   - Customer identity and segmentation columns.
-  - Includes `tier`, `preferred_store_id`, `stylist_notes`, `lifetime_value_band`.
+  - Includes `email`, `tier`, `preferred_store_id`, `stylist_notes`, `lifetime_value_band`.
 - `retail_core.customer_preferences`
   - Array preferences for sizes, colors, brands, and shopping occasions.
 - `retail_core.saved_items`

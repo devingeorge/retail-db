@@ -77,6 +77,8 @@ PAYMENT_WEIGHTS = [0.59, 0.17, 0.19, 0.05]
 
 CHANNELS = ["in_store", "online", "mobile"]
 CHANNEL_WEIGHTS = [0.55, 0.30, 0.15]
+EMAIL_DOMAINS = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com"]
+EMAIL_DOMAIN_WEIGHTS = [0.38, 0.18, 0.16, 0.14, 0.07, 0.07]
 
 STYLIST_NOTES = [
     "Prefers capsule wardrobe and neutral layering pieces.",
@@ -144,6 +146,12 @@ def weighted_choice(rng: random.Random, values: Sequence[str], weights: Sequence
 def random_subset(rng: random.Random, values: Sequence[str], min_size: int, max_size: int) -> List[str]:
     size = rng.randint(min_size, max_size)
     return rng.sample(list(values), k=min(size, len(values)))
+
+
+def build_email(first_name: str, last_name: str, customer_id: int, rng: random.Random) -> str:
+    domain = weighted_choice(rng, EMAIL_DOMAINS, EMAIL_DOMAIN_WEIGHTS)
+    handle = f"{first_name[0]}{last_name}".lower().replace("&", "and")
+    return f"{handle}{customer_id}@{domain}"
 
 
 def q4_dates_with_weights() -> Tuple[List[date], List[float]]:
@@ -292,6 +300,7 @@ def generate_core_files(
             [
                 "customer_id",
                 "loyalty_id",
+                "email",
                 "first_name",
                 "last_name",
                 "tier",
@@ -313,6 +322,11 @@ def generate_core_files(
         )
         s_writer.writerow(["saved_item_id", "customer_id", "product_id", "saved_at"])
 
+        forced_customers = {
+            1: {"first_name": "Leah", "last_name": "Grubb", "email": "lgrubb328@aol.com"},
+            2: {"first_name": "Leah", "last_name": "Grubb", "email": "lgrubb328@hotmail.com"},
+        }
+
         for customer_id in range(1, customer_count + 1):
             tier = weighted_choice(rng, TIERS, TIER_WEIGHTS)
             ltv_band = weighted_choice(rng, LTV_BANDS, TIER_TO_LTV_WEIGHTS[tier])
@@ -320,12 +334,20 @@ def generate_core_files(
             first_name = rng.choice(FIRST_NAMES)
             last_name = rng.choice(LAST_NAMES)
             loyalty_id = f"LOY-{customer_id:010d}"
+            email = build_email(first_name, last_name, customer_id, rng)
             created_at = date(2020, 1, 1) + timedelta(days=rng.randint(0, 2100))
+
+            if customer_id in forced_customers:
+                forced = forced_customers[customer_id]
+                first_name = forced["first_name"]
+                last_name = forced["last_name"]
+                email = forced["email"]
 
             c_writer.writerow(
                 [
                     customer_id,
                     loyalty_id,
+                    email,
                     first_name,
                     last_name,
                     tier,

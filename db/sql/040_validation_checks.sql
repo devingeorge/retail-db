@@ -36,6 +36,14 @@ FROM (
     HAVING COUNT(*) > 1
 ) d
 UNION ALL
+SELECT 'customers.email duplicates', COUNT(*)
+FROM (
+    SELECT email
+    FROM retail_core.customers
+    GROUP BY email
+    HAVING COUNT(*) > 1
+) d
+UNION ALL
 SELECT 'transactions.transaction_id duplicates', COUNT(*)
 FROM (
     SELECT transaction_id
@@ -70,6 +78,7 @@ LEFT JOIN retail_sales.transaction_items i ON i.transaction_item_id = r.transact
 \echo ===== Customer 360 Field Coverage =====
 SELECT
     COUNT(*) AS total_customers,
+    SUM(CASE WHEN email IS NULL OR email = '' THEN 1 ELSE 0 END) AS missing_email,
     SUM(CASE WHEN preferred_sizes IS NULL OR array_length(preferred_sizes, 1) = 0 THEN 1 ELSE 0 END) AS missing_preferred_sizes,
     SUM(CASE WHEN preferred_colors IS NULL OR array_length(preferred_colors, 1) = 0 THEN 1 ELSE 0 END) AS missing_preferred_colors,
     SUM(CASE WHEN preferred_brands IS NULL OR array_length(preferred_brands, 1) = 0 THEN 1 ELSE 0 END) AS missing_preferred_brands,

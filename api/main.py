@@ -135,6 +135,7 @@ def get_customer_profile(customer_id: int) -> dict:
         SELECT
             customer_id,
             loyalty_id,
+            email,
             first_name,
             last_name,
             tier,
@@ -167,6 +168,7 @@ def get_customer_profile_by_loyalty(loyalty_id: str) -> dict:
         SELECT
             customer_id,
             loyalty_id,
+            email,
             first_name,
             last_name,
             tier,
@@ -184,6 +186,39 @@ def get_customer_profile_by_loyalty(loyalty_id: str) -> dict:
         WHERE loyalty_id = :loyalty_id
         """,
         {"loyalty_id": loyalty_id},
+        "Customer not found.",
+    )
+
+
+@app.get(
+    "/customers/by-email",
+    dependencies=[Depends(require_api_key)],
+    summary="Get full customer 360 profile by email",
+)
+def get_customer_profile_by_email(email: str) -> dict:
+    return _fetch_one_or_404(
+        """
+        SELECT
+            customer_id,
+            loyalty_id,
+            email,
+            first_name,
+            last_name,
+            tier,
+            preferred_store_id,
+            preferred_sizes,
+            preferred_colors,
+            preferred_brands,
+            shopping_occasions,
+            recent_purchases,
+            saved_items,
+            return_history_summary,
+            stylist_notes,
+            lifetime_value_band
+        FROM retail_analytics.customer_360
+        WHERE LOWER(email) = LOWER(:email)
+        """,
+        {"email": email},
         "Customer not found.",
     )
 

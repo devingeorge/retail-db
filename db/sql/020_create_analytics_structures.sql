@@ -1,3 +1,5 @@
+DROP VIEW IF EXISTS retail_analytics.customer_360;
+
 DROP MATERIALIZED VIEW IF EXISTS retail_analytics.customer_recent_purchases;
 CREATE MATERIALIZED VIEW retail_analytics.customer_recent_purchases AS
 WITH ranked AS (
@@ -62,11 +64,11 @@ SELECT
 FROM retail_sales.returns r
 GROUP BY r.customer_id;
 
-DROP VIEW IF EXISTS retail_analytics.customer_360;
 CREATE VIEW retail_analytics.customer_360 AS
 SELECT
     c.customer_id,
     c.loyalty_id,
+    c.email,
     c.first_name,
     c.last_name,
     c.tier,
