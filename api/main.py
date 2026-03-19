@@ -3,7 +3,8 @@ from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
 
@@ -40,8 +41,15 @@ app = FastAPI(
     servers=[{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else [],
 )
 
+api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
-def require_api_key(x_api_key: str = Header(...)) -> None:
+
+def require_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API key.",
+        )
     if x_api_key != ACTIONS_API_KEY:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
