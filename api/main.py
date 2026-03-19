@@ -18,6 +18,7 @@ if not DB_URL:
         else:
             DB_URL = heroku_database_url
 ACTIONS_API_KEY = os.getenv("ACTIONS_API_KEY")
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL")
 
 if not DB_URL:
     raise RuntimeError("DB_URL is not set. Copy .env.example to .env and set DB_URL.")
@@ -34,6 +35,7 @@ app = FastAPI(
         "Local API for ChatGPT GPT Actions to inspect database schemas and tables. "
         "This starter intentionally provides read-only metadata endpoints."
     ),
+    servers=[{"url": PUBLIC_BASE_URL}] if PUBLIC_BASE_URL else [],
 )
 
 
