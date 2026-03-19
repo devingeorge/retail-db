@@ -8,6 +8,15 @@ from sqlalchemy import create_engine, text
 load_dotenv()
 
 DB_URL = os.getenv("DB_URL")
+if not DB_URL:
+    heroku_database_url = os.getenv("DATABASE_URL")
+    if heroku_database_url:
+        if heroku_database_url.startswith("postgres://"):
+            DB_URL = heroku_database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif heroku_database_url.startswith("postgresql://"):
+            DB_URL = heroku_database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        else:
+            DB_URL = heroku_database_url
 ACTIONS_API_KEY = os.getenv("ACTIONS_API_KEY")
 
 if not DB_URL:

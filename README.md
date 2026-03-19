@@ -115,6 +115,25 @@ Then configure your Action with:
 - Header: `x-api-key`
 - Value: `ACTIONS_API_KEY` from `.env`
 
+## Optional: Deploy to Heroku
+
+This repo includes Heroku deployment files:
+
+- `Procfile`
+- `requirements.txt` (root proxy to `api/requirements.txt`)
+- `runtime.txt`
+
+High-level flow:
+
+1. Create app and Postgres addon.
+2. Set `ACTIONS_API_KEY` config var.
+3. Deploy from `main`.
+4. Open:
+   - `https://<your-app>.herokuapp.com/health`
+   - `https://<your-app>.herokuapp.com/openapi.json`
+
+The API supports both `DB_URL` and Heroku `DATABASE_URL` automatically.
+
 ## API endpoints
 
 - `GET /health`
