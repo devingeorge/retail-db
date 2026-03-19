@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Security, status
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
@@ -126,6 +126,94 @@ class LifetimeValueBandsResponse(BaseModel):
     bands: list[LifetimeValueBandItem]
 
 
+class StyleSummary(BaseModel):
+    style_id: str
+    style_name: str
+    category: str
+    season: str
+    planned_cc_count: int
+    core_vs_fashion: str
+    strategic_priority: str
+
+
+class StyleSearchResponse(BaseModel):
+    styles: list[StyleSummary]
+
+
+class StyleSkuItem(BaseModel):
+    sku: str
+    style_id: str
+    style_name: str
+    category: str
+    color_name: str
+    size: str
+    msrp: float
+    cost: float
+    substitute_style_id: str | None
+    trade_up_style_id: str | None
+
+
+class StyleSkusResponse(BaseModel):
+    skus: list[StyleSkuItem]
+
+
+class InventoryItem(BaseModel):
+    store_id: int
+    store_name: str
+    region: str
+    sku: str
+    style_id: str
+    style_name: str
+    color_name: str
+    size: str
+    msrp: float
+    on_hand_units: int
+    available_for_transfer: bool
+    available_online_dc: int
+
+
+class InventoryResponse(BaseModel):
+    inventory: list[InventoryItem]
+
+
+class TransferOption(BaseModel):
+    source_store_id: int
+    source_store_name: str
+    source_region: str
+    on_hand_units: int
+    available_online_dc: int
+    available_for_transfer: bool
+    rank_reason: str
+
+
+class TransferOptionsResponse(BaseModel):
+    sku: str
+    origin_store_id: int
+    transfer_options: list[TransferOption]
+
+
+class AlternativeOption(BaseModel):
+    relationship_type: str
+    sku: str
+    style_id: str
+    style_name: str
+    category: str
+    color_name: str
+    size: str
+    msrp: float
+    store_id: int
+    store_name: str
+    region: str
+    on_hand_units: int
+    available_for_transfer: bool
+    available_online_dc: int
+
+
+class AlternativesResponse(BaseModel):
+    source_style_id: str
+    alternatives: list[AlternativeOption]
+
+
 @app.get("/health", summary="Health check", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
@@ -200,6 +288,13 @@ def _fetch_one_or_404(query_text: str, params: dict, not_found_message: str) -> 
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=not_found_message)
     return dict(row)
+
+
+def _fetch_all(query_text: str, params: dict | None = None) -> list[dict]:
+    query = text(query_text)
+    with engine.connect() as conn:
+        rows = conn.execute(query, params or {}).mappings().all()
+    return [dict(row) for row in rows]
 
 
 @app.get(
@@ -389,3 +484,315 @@ def get_lifetime_value_band_breakdown() -> LifetimeValueBandsResponse:
     return LifetimeValueBandsResponse(
         bands=[LifetimeValueBandItem(**dict(row)) for row in rows]
     )
+
+
+@app.get(
+    "/styles/search",
+    dependencies=[Depends(require_api_key)],
+    summary="Search styles by style name",
+    response_model=StyleSearchResponse,
+)
+def search_styles_by_name(
+    style_name: str = Query(..., min_length=2),
+    limit: int = Query(20, ge=1, le=100),
+) -> StyleSearchResponse:
+    rows = _fetch_all(
+        """
+        SELECT
+            style_id,
+            style_name,
+            category,
+            season,
+            planned_cc_count,
+            core_vs_fashion,
+            strategic_priority
+        FROM retail_usecases.styles
+        WHERE style_name ILIKE :style_name_pattern
+        ORDER BY style_name
+        LIMIT :limit
+        """,
+        {"style_name_pattern": f"%{style_name}%", "limit": limit},
+    )
+    return StyleSearchResponse(styles=[StyleSummary(**row) for row in rows])
+
+
+@app.get(
+    "/styles/{style_id}/skus",
+    dependencies=[Depends(require_api_key)],
+    summary="List SKU variants for a style",
+    response_model=StyleSkusResponse,
+)
+def get_style_skus(style_id: str) -> StyleSkusResponse:
+    rows = _fetch_all(
+        """
+        SELECT
+            s.sku,
+            s.style_id,
+            st.style_name,
+            st.category,
+            s.color_name,
+            s.size,
+            s.msrp,
+            s.cost,
+            s.substitute_style_id,
+            s.trade_up_style_id
+        FROM retail_usecases.skus s
+        JOIN retail_usecases.styles st ON st.style_id = s.style_id
+        WHERE s.style_id = :style_id
+        ORDER BY s.sku
+        """,
+        {"style_id": style_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Style or SKUs not found.")
+    return StyleSkusResponse(skus=[StyleSkuItem(**row) for row in rows])
+
+
+@app.get(
+    "/inventory/style/{style_id}",
+    dependencies=[Depends(require_api_key)],
+    summary="Get inventory for all SKUs in a style",
+    response_model=InventoryResponse,
+)
+def get_inventory_by_style(style_id: str) -> InventoryResponse:
+    rows = _fetch_all(
+        """
+        SELECT
+            i.store_id,
+            i.store_name,
+            i.region,
+            i.sku,
+            s.style_id,
+            st.style_name,
+            s.color_name,
+            s.size,
+            s.msrp,
+            i.on_hand_units,
+            i.available_for_transfer,
+            i.available_online_dc
+        FROM retail_usecases.inventory i
+        JOIN retail_usecases.skus s ON s.sku = i.sku
+        JOIN retail_usecases.styles st ON st.style_id = s.style_id
+        WHERE s.style_id = :style_id
+        ORDER BY i.on_hand_units DESC, i.available_online_dc DESC
+        """,
+        {"style_id": style_id},
+    )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No inventory found for style.")
+    return InventoryResponse(inventory=[InventoryItem(**row) for row in rows])
+
+
+@app.get(
+    "/inventory/style/{style_id}/size/{size}",
+    dependencies=[Depends(require_api_key)],
+    summary="Get inventory for a style filtered by size",
+    response_model=InventoryResponse,
+)
+def get_inventory_by_style_and_size(style_id: str, size: str) -> InventoryResponse:
+    rows = _fetch_all(
+        """
+        SELECT
+            i.store_id,
+            i.store_name,
+            i.region,
+            i.sku,
+            s.style_id,
+            st.style_name,
+            s.color_name,
+            s.size,
+            s.msrp,
+            i.on_hand_units,
+            i.available_for_transfer,
+            i.available_online_dc
+        FROM retail_usecases.inventory i
+        JOIN retail_usecases.skus s ON s.sku = i.sku
+        JOIN retail_usecases.styles st ON st.style_id = s.style_id
+        WHERE s.style_id = :style_id
+          AND s.size = :size
+        ORDER BY i.on_hand_units DESC, i.available_online_dc DESC
+        """,
+        {"style_id": style_id, "size": size},
+    )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No inventory found for style and size.")
+    return InventoryResponse(inventory=[InventoryItem(**row) for row in rows])
+
+
+@app.get(
+    "/inventory/sku/{sku}",
+    dependencies=[Depends(require_api_key)],
+    summary="Get inventory by exact SKU",
+    response_model=InventoryResponse,
+)
+def get_inventory_by_sku(sku: str) -> InventoryResponse:
+    rows = _fetch_all(
+        """
+        SELECT
+            i.store_id,
+            i.store_name,
+            i.region,
+            i.sku,
+            s.style_id,
+            st.style_name,
+            s.color_name,
+            s.size,
+            s.msrp,
+            i.on_hand_units,
+            i.available_for_transfer,
+            i.available_online_dc
+        FROM retail_usecases.inventory i
+        JOIN retail_usecases.skus s ON s.sku = i.sku
+        JOIN retail_usecases.styles st ON st.style_id = s.style_id
+        WHERE i.sku = :sku
+        ORDER BY i.on_hand_units DESC, i.available_online_dc DESC
+        """,
+        {"sku": sku},
+    )
+    if not rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No inventory found for SKU.")
+    return InventoryResponse(inventory=[InventoryItem(**row) for row in rows])
+
+
+@app.get(
+    "/inventory/transfer-options",
+    dependencies=[Depends(require_api_key)],
+    summary="Rank transfer options for a SKU from an origin store",
+    response_model=TransferOptionsResponse,
+)
+def get_transfer_options(
+    sku: str,
+    origin_store_id: int,
+    limit: int = Query(5, ge=1, le=20),
+) -> TransferOptionsResponse:
+    origin = _fetch_one_or_404(
+        """
+        SELECT store_id, region
+        FROM retail_usecases.inventory
+        WHERE store_id = :origin_store_id
+          AND sku = :sku
+        LIMIT 1
+        """,
+        {"origin_store_id": origin_store_id, "sku": sku},
+        "Origin store inventory for SKU not found.",
+    )
+
+    rows = _fetch_all(
+        """
+        SELECT
+            i.store_id AS source_store_id,
+            i.store_name AS source_store_name,
+            i.region AS source_region,
+            i.on_hand_units,
+            i.available_online_dc,
+            i.available_for_transfer
+        FROM retail_usecases.inventory i
+        WHERE i.sku = :sku
+          AND i.store_id <> :origin_store_id
+          AND i.on_hand_units > 0
+          AND i.available_for_transfer = TRUE
+        ORDER BY
+            CASE WHEN i.region = :origin_region THEN 0 ELSE 1 END,
+            i.on_hand_units DESC,
+            i.available_online_dc DESC
+        LIMIT :limit
+        """,
+        {
+            "sku": sku,
+            "origin_store_id": origin_store_id,
+            "origin_region": origin["region"],
+            "limit": limit,
+        },
+    )
+
+    options: list[TransferOption] = []
+    for row in rows:
+        rank_reason = (
+            "same region, high stock"
+            if row["source_region"] == origin["region"]
+            else "cross-region availability"
+        )
+        options.append(TransferOption(**row, rank_reason=rank_reason))
+
+    return TransferOptionsResponse(
+        sku=sku,
+        origin_store_id=origin_store_id,
+        transfer_options=options,
+    )
+
+
+@app.get(
+    "/styles/{style_id}/alternatives",
+    dependencies=[Depends(require_api_key)],
+    summary="Find substitute and trade-up alternatives with inventory",
+    response_model=AlternativesResponse,
+)
+def get_style_alternatives(
+    style_id: str,
+    size: str | None = None,
+    preferred_colors: str | None = Query(
+        default=None, description="Comma-separated colors, e.g. Blue,Beige"
+    ),
+    origin_store_id: int | None = None,
+    limit: int = Query(10, ge=1, le=50),
+) -> AlternativesResponse:
+    rows = _fetch_all(
+        """
+        WITH refs AS (
+            SELECT DISTINCT substitute_style_id AS ref_style_id, 'substitute' AS relationship_type
+            FROM retail_usecases.skus
+            WHERE style_id = :style_id
+              AND substitute_style_id IS NOT NULL
+            UNION ALL
+            SELECT DISTINCT trade_up_style_id AS ref_style_id, 'trade_up' AS relationship_type
+            FROM retail_usecases.skus
+            WHERE style_id = :style_id
+              AND trade_up_style_id IS NOT NULL
+        )
+        SELECT
+            r.relationship_type,
+            s.sku,
+            s.style_id,
+            st.style_name,
+            st.category,
+            s.color_name,
+            s.size,
+            s.msrp,
+            i.store_id,
+            i.store_name,
+            i.region,
+            i.on_hand_units,
+            i.available_for_transfer,
+            i.available_online_dc
+        FROM refs r
+        JOIN retail_usecases.skus s ON s.style_id = r.ref_style_id
+        JOIN retail_usecases.styles st ON st.style_id = s.style_id
+        JOIN retail_usecases.inventory i ON i.sku = s.sku
+        WHERE i.on_hand_units > 0
+          AND (:size IS NULL OR s.size = :size)
+          AND (:origin_store_id IS NULL OR i.store_id = :origin_store_id)
+        ORDER BY
+            CASE WHEN r.relationship_type = 'substitute' THEN 0 ELSE 1 END,
+            i.on_hand_units DESC,
+            i.available_online_dc DESC
+        LIMIT :limit
+        """,
+        {
+            "style_id": style_id,
+            "size": size,
+            "origin_store_id": origin_store_id,
+            "limit": limit,
+        },
+    )
+
+    preferred_color_set: set[str] | None = None
+    if preferred_colors:
+        preferred_color_set = {color.strip().lower() for color in preferred_colors.split(",") if color.strip()}
+
+    options: list[AlternativeOption] = []
+    for row in rows:
+        if preferred_color_set and row["color_name"].lower() not in preferred_color_set:
+            continue
+        options.append(AlternativeOption(**row))
+
+    return AlternativesResponse(source_style_id=style_id, alternatives=options)
