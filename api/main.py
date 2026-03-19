@@ -191,7 +191,7 @@ def get_customer_profile_by_loyalty(loyalty_id: str) -> dict:
 
 
 @app.get(
-    "/customers/by-email",
+    "/customers/email/{email}",
     dependencies=[Depends(require_api_key)],
     summary="Get full customer 360 profile by email",
 )

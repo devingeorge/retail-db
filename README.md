@@ -142,7 +142,7 @@ The API supports both `DB_URL` and Heroku `DATABASE_URL` automatically.
 - `POST /schemas` (API key)
 - `GET /customers/{customer_id}` (API key)
 - `GET /customers/by-loyalty/{loyalty_id}` (API key)
-- `GET /customers/by-email?email=<email>` (API key)
+- `GET /customers/email/{email}` (API key)
 - `GET /customers/{customer_id}/recent-purchases` (API key)
 - `GET /customers/{customer_id}/saved-items` (API key)
 - `GET /customers/{customer_id}/return-summary` (API key)
