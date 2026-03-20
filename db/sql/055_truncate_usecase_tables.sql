@@ -1,0 +1,5 @@
+TRUNCATE TABLE retail_usecases.sales_summary RESTART IDENTITY CASCADE;
+TRUNCATE TABLE retail_usecases.inventory RESTART IDENTITY CASCADE;
+TRUNCATE TABLE retail_usecases.customer_profiles RESTART IDENTITY CASCADE;
+TRUNCATE TABLE retail_usecases.skus RESTART IDENTITY CASCADE;
+TRUNCATE TABLE retail_usecases.styles RESTART IDENTITY CASCADE;

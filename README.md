@@ -151,3 +151,36 @@ The API supports both `DB_URL` and Heroku `DATABASE_URL` automatically.
 ## Data dictionary and mapping
 
 - Required customer field mapping: `docs/customer_360_mapping.md`
+
+## Additional Use-Case Dataset (small)
+
+For a compact Heroku-friendly dataset supporting:
+
+- Store associate assist
+- Merchandising analysis
+
+Generate:
+
+```bash
+python3 scripts/generate_usecase_dataset.py \
+  --output-dir data/generated/usecases_demo_small \
+  --styles 300 \
+  --skus 2400 \
+  --stores 120 \
+  --customers 2000
+```
+
+Load:
+
+```bash
+chmod +x scripts/load_usecase_dataset_to_postgres.sh
+DB_URL="<postgres-connection-url>" ./scripts/load_usecase_dataset_to_postgres.sh
+```
+
+This loads these files into schema `retail_usecases`:
+
+- `styles.csv`
+- `skus.csv`
+- `inventory.csv`
+- `sales_summary.csv`
+- `customer_profiles.csv`

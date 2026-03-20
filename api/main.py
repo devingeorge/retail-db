@@ -215,6 +215,49 @@ class AlternativesResponse(BaseModel):
     alternatives: list[AlternativeOption]
 
 
+class StoreLocationResponse(BaseModel):
+    store_id: int
+    store_name: str
+    region: str
+    state_code: str
+    city: str
+    street_address: str | None
+    postal_code: str | None
+
+
+class OrderItemCreateRequest(BaseModel):
+    sku: str
+    quantity: int = Field(..., ge=1, le=50)
+
+
+class OrderCreateRequest(BaseModel):
+    customer_id: int
+    store_id: int
+    items: list[OrderItemCreateRequest] = Field(..., min_length=1)
+    associate_note: str | None = Field(default=None, max_length=500)
+
+
+class OrderItemResponse(BaseModel):
+    sku: str
+    quantity: int
+    unit_price: float
+    line_total: float
+
+
+class OrderResponse(BaseModel):
+    order_id: int
+    customer_id: int
+    customer_name: str
+    store_id: int
+    store_name: str
+    order_status: str
+    order_source: str
+    associate_note: str | None
+    created_at: datetime
+    total_amount: float
+    items: list[OrderItemResponse]
+
+
 @app.get("/health", summary="Health check", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
@@ -318,6 +361,87 @@ def _normalize_style_id(style_id: str) -> str:
     if match:
         return f"STY-{int(match.group(1)):04d}"
     return normalized
+
+
+def _build_order_response(order_id: int) -> OrderResponse:
+    header = _fetch_one_or_404(
+        """
+        SELECT
+            o.order_id,
+            o.customer_id,
+            CONCAT(c.first_name, ' ', c.last_name) AS customer_name,
+            o.store_id,
+            s.store_name,
+            o.order_status,
+            o.order_source,
+            o.associate_note,
+            o.created_at,
+            COALESCE(SUM(oi.quantity * oi.unit_price), 0)::float AS total_amount
+        FROM "ORDERS".orders o
+        JOIN retail_core.customers c ON c.customer_id = o.customer_id
+        JOIN retail_core.stores s ON s.store_id = o.store_id
+        LEFT JOIN "ORDERS".order_items oi ON oi.order_id = o.order_id
+        WHERE o.order_id = :order_id
+        GROUP BY
+            o.order_id,
+            o.customer_id,
+            c.first_name,
+            c.last_name,
+            o.store_id,
+            s.store_name,
+            o.order_status,
+            o.order_source,
+            o.associate_note,
+            o.created_at
+        """,
+        {"order_id": order_id},
+        "Order not found.",
+    )
+
+    item_rows = _fetch_all(
+        """
+        SELECT
+            sku,
+            quantity,
+            unit_price::float AS unit_price,
+            (quantity * unit_price)::float AS line_total
+        FROM "ORDERS".order_items
+        WHERE order_id = :order_id
+        ORDER BY order_item_id
+        """,
+        {"order_id": order_id},
+    )
+
+    return OrderResponse(
+        **header,
+        items=[OrderItemResponse(**row) for row in item_rows],
+    )
+
+
+@app.get(
+    "/stores/{store_id}",
+    dependencies=[Depends(require_api_key)],
+    summary="Get physical store location details by store ID",
+    response_model=StoreLocationResponse,
+)
+def get_store_location(store_id: int) -> StoreLocationResponse:
+    row = _fetch_one_or_404(
+        """
+        SELECT
+            store_id,
+            store_name,
+            region,
+            state_code,
+            city,
+            street_address,
+            postal_code
+        FROM retail_core.stores
+        WHERE store_id = :store_id
+        """,
+        {"store_id": store_id},
+        "Store not found.",
+    )
+    return StoreLocationResponse(**row)
 
 
 @app.get(
@@ -823,3 +947,91 @@ def get_style_alternatives(
         options.append(AlternativeOption(**row))
 
     return AlternativesResponse(source_style_id=normalized_style_id, alternatives=options)
+
+
+@app.post(
+    "/orders",
+    dependencies=[Depends(require_api_key)],
+    summary="Create an order in the ORDERS schema",
+    response_model=OrderResponse,
+)
+def create_order(payload: OrderCreateRequest) -> OrderResponse:
+    with engine.begin() as conn:
+        customer = conn.execute(
+            text("SELECT customer_id FROM retail_core.customers WHERE customer_id = :customer_id"),
+            {"customer_id": payload.customer_id},
+        ).mappings().first()
+        if customer is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Customer not found.")
+
+        store = conn.execute(
+            text("SELECT store_id FROM retail_core.stores WHERE store_id = :store_id"),
+            {"store_id": payload.store_id},
+        ).mappings().first()
+        if store is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store not found.")
+
+        created = conn.execute(
+            text(
+                """
+                INSERT INTO "ORDERS".orders (customer_id, store_id, order_status, order_source, associate_note)
+                VALUES (:customer_id, :store_id, 'pending', 'gpt_action', :associate_note)
+                RETURNING order_id
+                """
+            ),
+            {
+                "customer_id": payload.customer_id,
+                "store_id": payload.store_id,
+                "associate_note": payload.associate_note,
+            },
+        ).mappings().first()
+        if created is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Unable to create order.",
+            )
+        order_id = int(created["order_id"])
+
+        for item in payload.items:
+            price_row = conn.execute(
+                text(
+                    """
+                    SELECT msrp::float AS unit_price
+                    FROM retail_usecases.skus
+                    WHERE sku = :sku
+                    """
+                ),
+                {"sku": item.sku},
+            ).mappings().first()
+            if price_row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"SKU not found: {item.sku}",
+                )
+
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO "ORDERS".order_items (order_id, sku, quantity, unit_price)
+                    VALUES (:order_id, :sku, :quantity, :unit_price)
+                    """
+                ),
+                {
+                    "order_id": order_id,
+                    "sku": item.sku,
+                    "quantity": item.quantity,
+                    "unit_price": price_row["unit_price"],
+                },
+            )
+
+    return _build_order_response(order_id)
+
+
+@app.get(
+    "/orders/{order_id}",
+    dependencies=[Depends(require_api_key)],
+    summary="Get an order from the ORDERS schema",
+    response_model=OrderResponse,
+)
+def get_order(order_id: int) -> OrderResponse:
+    return _build_order_response(order_id)
