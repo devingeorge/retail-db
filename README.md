@@ -1,15 +1,11 @@
-# Local Retail DB + GPT Actions
+# Minimal Unified Retail Demo DB + GPT Actions
 
-This project now includes:
+This project now uses a **single minimal schema** (`retail_demo`) designed to support two live demos with one GPT:
 
-- Local PostgreSQL with 3 schemas:
-  - `retail_core`
-  - `retail_sales`
-  - `retail_analytics`
-- A deterministic synthetic dataset generator for Q4 2025 at large scale
-- High-throughput CSV import scripts (`COPY`)
-- Validation SQL checks
-- GPT Actions-ready API endpoints for customer profile and analytics lookups
+- Store associate / customer support
+- Merchandising performance + planning
+
+The model is intentionally small and hand-curated.
 
 ## 1) Environment setup
 
@@ -19,75 +15,21 @@ cp .env.example .env
 
 Set a strong `ACTIONS_API_KEY` in `.env`.
 
-## 2) Start PostgreSQL
+## 2) Load the minimal demo database
+
+Run this against your target Postgres DB:
 
 ```bash
-docker compose up -d
+psql "$DB_URL" -f db/sql/082_reset_and_load_minimal_demo.sql
 ```
 
-Initial schema creation comes from `db/init/001_create_schemas.sql`.
+This will:
 
-## 3) Generate synthetic Fortune-1000 dataset
+1. Drop previous demo schemas (`retail_core`, `retail_sales`, `retail_analytics`, `retail_usecases`, `"ORDERS"`, and `retail_demo`).
+2. Create fresh minimal tables from `db/sql/080_create_minimal_demo_tables.sql`.
+3. Seed compact hand-curated demo data from `db/sql/081_seed_minimal_demo_data.sql`.
 
-Use defaults (about 10M transactions):
-
-```bash
-python3 scripts/generate_q4_dataset.py
-```
-
-Or override scale:
-
-```bash
-python3 scripts/generate_q4_dataset.py \
-  --customers 750000 \
-  --stores 1100 \
-  --products 120000 \
-  --transactions 10000000 \
-  --chunk-size 1000000 \
-  --seed 1001
-```
-
-Output goes to `data/generated/q4_2025` by default. See `data/README.md` for file layout.
-
-## 4) Import generated CSV files into Postgres
-
-```bash
-chmod +x scripts/import_csv_to_postgres.sh
-./scripts/import_csv_to_postgres.sh
-```
-
-If your dataset is in a non-default location:
-
-```bash
-./scripts/import_csv_to_postgres.sh /absolute/path/to/dataset
-```
-
-The import script runs:
-
-1. `db/sql/010_create_retail_tables.sql`
-2. `db/sql/015_truncate_for_reload.sql`
-3. `db/sql/025_copy_static_tables.sql`
-4. Chunked `\copy` for transactions, transaction items, returns
-5. `db/sql/020_create_analytics_structures.sql`
-6. `db/sql/030_post_import_maintenance.sql`
-
-## 5) Validate dataset quality
-
-Run the validation script:
-
-```bash
-psql "$DB_URL" -f db/sql/040_validation_checks.sql
-```
-
-Checks include:
-
-- row counts
-- uniqueness
-- Q4 date integrity
-- referential integrity spot checks
-- customer 360 required-field coverage
-
-## 6) Start API for GPT Actions
+## 3) Start API for GPT Actions
 
 ```bash
 python3 -m venv .venv
@@ -100,87 +42,49 @@ OpenAPI schema:
 
 - `http://localhost:8000/openapi.json`
 
-## 7) Connect in GPT Actions
+## 4) GPT Actions configuration
 
-ChatGPT Actions requires a public HTTPS endpoint. Tunnel your local API:
+For a public deployment (Heroku), use:
 
-```bash
-ngrok http 8000
-```
+- App URL: `https://murmuring-bastion-19065-1f21cad4ee34.herokuapp.com`
+- OpenAPI URL: `https://murmuring-bastion-19065-1f21cad4ee34.herokuapp.com/openapi.json?refresh=1`
+- Auth: API key header `x-api-key`
 
-Then configure your Action with:
+Reference: [Getting started with GPT Actions](https://developers.openai.com/api/docs/actions/getting-started)
 
-- Schema URL: `https://<your-ngrok-domain>/openapi.json`
-- Authentication: API key
-- Header: `x-api-key`
-- Value: `ACTIONS_API_KEY` from `.env`
+## 5) Endpoint surface (minimal demo)
 
-## Optional: Deploy to Heroku
+### Associate / support
 
-This repo includes Heroku deployment files:
+- `GET /products/search`
+- `GET /products/{product_id}`
+- `GET /inventory/products/{product_id}`
+- `GET /inventory/products/{product_id}/stores/{store_id}`
+- `GET /products/{product_id}/relationships`
 
-- `Procfile`
-- `requirements.txt` (root proxy to `api/requirements.txt`)
-- `runtime.txt`
+### Orders
 
-High-level flow:
+- `POST /orders`
+- `GET /orders/{order_id}`
 
-1. Create app and Postgres addon.
-2. Set `ACTIONS_API_KEY` config var.
-3. Deploy from `main`.
-4. Open:
-   - `https://<your-app>.herokuapp.com/health`
-   - `https://<your-app>.herokuapp.com/openapi.json`
+### Merch / planning
 
-The API supports both `DB_URL` and Heroku `DATABASE_URL` automatically.
+- `GET /performance/weekly`
+- `GET /planning/inventory-imbalance`
+- `GET /planning/recommendations`
 
-## API endpoints
+### Utility
 
 - `GET /health`
-- `GET /schemas` (API key)
-- `GET /schemas/{schema_name}/tables` (API key)
-- `POST /schemas` (API key)
-- `GET /customers/{customer_id}` (API key)
-- `GET /customers/by-loyalty/{loyalty_id}` (API key)
-- `GET /customers/email/{email}` (API key)
-- `GET /customers/{customer_id}/recent-purchases` (API key)
-- `GET /customers/{customer_id}/saved-items` (API key)
-- `GET /customers/{customer_id}/return-summary` (API key)
-- `GET /analytics/lifetime-value-bands` (API key)
 
-## Data dictionary and mapping
+## 6) Data design highlights
 
-- Required customer field mapping: `docs/customer_360_mapping.md`
+- 3 stores: Portland, Boston, Philadelphia.
+- Tiny assortment: dresses + shoes with explicit `alternative` and `complementary` links.
+- Style-level weekly performance summary for planning use cases.
+- SKU-level store inventory for associate and transfer workflows.
+- One external image URL per product.
 
-## Additional Use-Case Dataset (small)
+See detailed field descriptions in:
 
-For a compact Heroku-friendly dataset supporting:
-
-- Store associate assist
-- Merchandising analysis
-
-Generate:
-
-```bash
-python3 scripts/generate_usecase_dataset.py \
-  --output-dir data/generated/usecases_demo_small \
-  --styles 300 \
-  --skus 2400 \
-  --stores 120 \
-  --customers 2000
-```
-
-Load:
-
-```bash
-chmod +x scripts/load_usecase_dataset_to_postgres.sh
-DB_URL="<postgres-connection-url>" ./scripts/load_usecase_dataset_to_postgres.sh
-```
-
-This loads these files into schema `retail_usecases`:
-
-- `styles.csv`
-- `skus.csv`
-- `inventory.csv`
-- `sales_summary.csv`
-- `customer_profiles.csv`
+- `docs/minimal_demo_data_dictionary.md`
