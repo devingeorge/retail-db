@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from typing import Any
 
@@ -297,6 +298,28 @@ def _fetch_all(query_text: str, params: dict | None = None) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def _normalize_style_id(style_id: str) -> str:
+    """
+    Accept style identifiers in several common forms and normalize to STY-####.
+    Examples:
+    - STY-0219 -> STY-0219
+    - 0219 -> STY-0219
+    - Athleisure Style 0219 -> STY-0219
+    """
+    normalized = style_id.strip().upper()
+    if normalized.startswith("STY-"):
+        suffix = normalized[4:]
+        if suffix.isdigit():
+            return f"STY-{int(suffix):04d}"
+        return normalized
+    if normalized.isdigit():
+        return f"STY-{int(normalized):04d}"
+    match = re.search(r"(\d{1,4})$", normalized)
+    if match:
+        return f"STY-{int(match.group(1)):04d}"
+    return normalized
+
+
 @app.get(
     "/customers/{customer_id}",
     dependencies=[Depends(require_api_key)],
@@ -523,6 +546,7 @@ def search_styles_by_name(
     response_model=StyleSkusResponse,
 )
 def get_style_skus(style_id: str) -> StyleSkusResponse:
+    normalized_style_id = _normalize_style_id(style_id)
     rows = _fetch_all(
         """
         SELECT
@@ -541,7 +565,7 @@ def get_style_skus(style_id: str) -> StyleSkusResponse:
         WHERE s.style_id = :style_id
         ORDER BY s.sku
         """,
-        {"style_id": style_id},
+        {"style_id": normalized_style_id},
     )
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Style or SKUs not found.")
@@ -555,6 +579,7 @@ def get_style_skus(style_id: str) -> StyleSkusResponse:
     response_model=InventoryResponse,
 )
 def get_inventory_by_style(style_id: str) -> InventoryResponse:
+    normalized_style_id = _normalize_style_id(style_id)
     rows = _fetch_all(
         """
         SELECT
@@ -576,7 +601,7 @@ def get_inventory_by_style(style_id: str) -> InventoryResponse:
         WHERE s.style_id = :style_id
         ORDER BY i.on_hand_units DESC, i.available_online_dc DESC
         """,
-        {"style_id": style_id},
+        {"style_id": normalized_style_id},
     )
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No inventory found for style.")
@@ -590,6 +615,7 @@ def get_inventory_by_style(style_id: str) -> InventoryResponse:
     response_model=InventoryResponse,
 )
 def get_inventory_by_style_and_size(style_id: str, size: str) -> InventoryResponse:
+    normalized_style_id = _normalize_style_id(style_id)
     rows = _fetch_all(
         """
         SELECT
@@ -612,7 +638,7 @@ def get_inventory_by_style_and_size(style_id: str, size: str) -> InventoryRespon
           AND s.size = :size
         ORDER BY i.on_hand_units DESC, i.available_online_dc DESC
         """,
-        {"style_id": style_id, "size": size},
+        {"style_id": normalized_style_id, "size": size},
     )
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No inventory found for style and size.")
@@ -736,6 +762,7 @@ def get_style_alternatives(
     origin_store_id: int | None = None,
     limit: int = Query(10, ge=1, le=50),
 ) -> AlternativesResponse:
+    normalized_style_id = _normalize_style_id(style_id)
     rows = _fetch_all(
         """
         WITH refs AS (
@@ -778,7 +805,7 @@ def get_style_alternatives(
         LIMIT :limit
         """,
         {
-            "style_id": style_id,
+            "style_id": normalized_style_id,
             "size": size,
             "origin_store_id": origin_store_id,
             "limit": limit,
@@ -795,4 +822,4 @@ def get_style_alternatives(
             continue
         options.append(AlternativeOption(**row))
 
-    return AlternativesResponse(source_style_id=style_id, alternatives=options)
+    return AlternativesResponse(source_style_id=normalized_style_id, alternatives=options)
