@@ -1,5 +1,6 @@
 import os
 import uuid
+import json
 from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -30,6 +31,7 @@ if not ACTIONS_API_KEY:
     raise RuntimeError("ACTIONS_API_KEY is not set. Copy .env.example to .env and set ACTIONS_API_KEY.")
 
 engine = create_engine(DB_URL, future=True)
+DEBUG_LOG_PATH = "/Users/devin.george/retail-db/.cursor/debug-57b5c1.log"
 
 app = FastAPI(
     title="Retail Demo GPT Actions API",
@@ -60,6 +62,23 @@ def _fetch_all(query_text: str, params: dict | None = None) -> list[dict]:
     with engine.connect() as conn:
         rows = conn.execute(text(query_text), params or {}).mappings().all()
     return [dict(row) for row in rows]
+
+
+def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    try:
+        payload = {
+            "sessionId": "57b5c1",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+        }
+        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
 
 
 class HealthResponse(BaseModel):
@@ -239,29 +258,61 @@ def search_products(
     occasion: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
 ) -> ProductSearchResponse:
-    rows = _fetch_all(
-        """
-        SELECT
-            product_id, style_id, sku_id, product_name, category, subcategory, brand,
-            color, size, season, msrp::float AS msrp, cost::float AS cost,
-            description, image_url, silhouette, occasion, material, status
-        FROM retail_demo.products
-        WHERE (CAST(:q AS TEXT) IS NULL OR product_name ILIKE :q_pattern OR style_id ILIKE :q_pattern OR sku_id ILIKE :q_pattern)
-          AND (CAST(:category AS TEXT) IS NULL OR category = :category)
-          AND (CAST(:occasion AS TEXT) IS NULL OR occasion = :occasion)
-          AND status = 'active'
-        ORDER BY category, product_name, color, size
-        LIMIT :limit
-        """,
-        {
-            "q": q,
-            "q_pattern": f"%{q}%" if q else None,
-            "category": category,
-            "occasion": occasion,
-            "limit": limit,
-        },
+    run_id = f"search_{uuid.uuid4().hex[:8]}"
+    params = {
+        "q": q,
+        "q_pattern": f"%{q}%" if q else None,
+        "category": category,
+        "occasion": occasion,
+        "limit": limit,
+    }
+    # region agent log
+    _debug_log(
+        run_id=run_id,
+        hypothesis_id="H1",
+        location="api/main.py:search_products:entry",
+        message="search_products called",
+        data={"q": q, "category": category, "occasion": occasion, "limit": limit},
     )
-    return ProductSearchResponse(products=[ProductRecord(**row) for row in rows])
+    # endregion
+    try:
+        rows = _fetch_all(
+            """
+            SELECT
+                product_id, style_id, sku_id, product_name, category, subcategory, brand,
+                color, size, season, msrp::float AS msrp, cost::float AS cost,
+                description, image_url, silhouette, occasion, material, status
+            FROM retail_demo.products
+            WHERE (CAST(:q AS TEXT) IS NULL OR product_name ILIKE :q_pattern OR style_id ILIKE :q_pattern OR sku_id ILIKE :q_pattern)
+              AND (CAST(:category AS TEXT) IS NULL OR category = :category)
+              AND (CAST(:occasion AS TEXT) IS NULL OR occasion = :occasion)
+              AND status = 'active'
+            ORDER BY category, product_name, color, size
+            LIMIT :limit
+            """,
+            params,
+        )
+        # region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H2",
+            location="api/main.py:search_products:after_query",
+            message="search_products query succeeded",
+            data={"row_count": len(rows), "first_product_id": rows[0]["product_id"] if rows else None},
+        )
+        # endregion
+        return ProductSearchResponse(products=[ProductRecord(**row) for row in rows])
+    except Exception as exc:
+        # region agent log
+        _debug_log(
+            run_id=run_id,
+            hypothesis_id="H3",
+            location="api/main.py:search_products:exception",
+            message="search_products failed",
+            data={"error_type": type(exc).__name__, "error": str(exc)},
+        )
+        # endregion
+        raise
 
 
 @app.get(
