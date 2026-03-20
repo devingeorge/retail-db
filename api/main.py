@@ -44,6 +44,15 @@ api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
 def require_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
+    # region agent log
+    _debug_log(
+        run_id=f"auth_{uuid.uuid4().hex[:8]}",
+        hypothesis_id="H4",
+        location="api/main.py:require_api_key:entry",
+        message="api key guard invoked",
+        data={"provided": x_api_key is not None},
+    )
+    # endregion
     if not x_api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing API key.")
     if x_api_key != ACTIONS_API_KEY:
