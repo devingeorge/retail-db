@@ -246,9 +246,9 @@ def search_products(
             color, size, season, msrp::float AS msrp, cost::float AS cost,
             description, image_url, silhouette, occasion, material, status
         FROM retail_demo.products
-        WHERE (:q::text IS NULL OR product_name ILIKE :q_pattern OR style_id ILIKE :q_pattern OR sku_id ILIKE :q_pattern)
-          AND (:category::text IS NULL OR category = :category)
-          AND (:occasion::text IS NULL OR occasion = :occasion)
+        WHERE (CAST(:q AS TEXT) IS NULL OR product_name ILIKE :q_pattern OR style_id ILIKE :q_pattern OR sku_id ILIKE :q_pattern)
+          AND (CAST(:category AS TEXT) IS NULL OR category = :category)
+          AND (CAST(:occasion AS TEXT) IS NULL OR occasion = :occasion)
           AND status = 'active'
         ORDER BY category, product_name, color, size
         LIMIT :limit
@@ -397,14 +397,14 @@ def get_product_relationships(
         JOIN retail_demo.products p ON p.product_id = rel.related_product_id
         LEFT JOIN retail_demo.inventory store_inv
             ON store_inv.sku_id = p.sku_id
-           AND (:origin_store_id::int IS NOT NULL AND store_inv.store_id = :origin_store_id)
+           AND (CAST(:origin_store_id AS INTEGER) IS NOT NULL AND store_inv.store_id = :origin_store_id)
         LEFT JOIN (
             SELECT sku_id, SUM(available_qty)::int AS total_available_qty
             FROM retail_demo.inventory
             GROUP BY sku_id
         ) total_inv ON total_inv.sku_id = p.sku_id
         WHERE rel.source_product_id = :product_id
-          AND (:relationship_type::text IS NULL OR rel.relationship_type = :relationship_type)
+          AND (CAST(:relationship_type AS TEXT) IS NULL OR rel.relationship_type = :relationship_type)
         ORDER BY
             CASE rel.relationship_type WHEN 'alternative' THEN 0 ELSE 1 END,
             COALESCE(store_inv.available_qty, 0) DESC,
@@ -655,11 +655,11 @@ def get_weekly_performance(
             SELECT DISTINCT style_id, category
             FROM retail_demo.products
         ) pr ON pr.style_id = p.style_id
-        WHERE (:category::text IS NULL OR pr.category = :category)
-          AND (:style_id::text IS NULL OR p.style_id = :style_id)
-          AND (:store_id::int IS NULL OR p.store_id = :store_id)
-          AND (:week_start_from::date IS NULL OR p.week_start_date >= :week_start_from)
-          AND (:week_start_to::date IS NULL OR p.week_start_date <= :week_start_to)
+        WHERE (CAST(:category AS TEXT) IS NULL OR pr.category = :category)
+          AND (CAST(:style_id AS TEXT) IS NULL OR p.style_id = :style_id)
+          AND (CAST(:store_id AS INTEGER) IS NULL OR p.store_id = :store_id)
+          AND (CAST(:week_start_from AS DATE) IS NULL OR p.week_start_date >= :week_start_from)
+          AND (CAST(:week_start_to AS DATE) IS NULL OR p.week_start_date <= :week_start_to)
         ORDER BY p.week_start_date DESC, p.store_id, p.style_id
         """,
         {
@@ -697,7 +697,7 @@ def get_inventory_imbalance(
             FROM retail_demo.inventory i
             JOIN retail_demo.stores s ON s.store_id = i.store_id
             JOIN retail_demo.products p ON p.sku_id = i.sku_id
-            WHERE (:category::text IS NULL OR p.category = :category)
+            WHERE (CAST(:category AS TEXT) IS NULL OR p.category = :category)
         )
         SELECT
             short.sku_id,
@@ -750,7 +750,7 @@ def get_planning_recommendations(
                 SELECT DISTINCT style_id, category
                 FROM retail_demo.products
             ) pr ON pr.style_id = p.style_id
-            WHERE (:category::text IS NULL OR pr.category = :category)
+            WHERE (CAST(:category AS TEXT) IS NULL OR pr.category = :category)
             GROUP BY p.store_id, s.store_name, p.style_id, pr.category
         ),
         style_inv AS (
