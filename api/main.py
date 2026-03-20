@@ -1,6 +1,6 @@
 import os
+import re
 import uuid
-import json
 from datetime import date, datetime, timedelta, timezone
 
 from dotenv import load_dotenv
@@ -31,7 +31,6 @@ if not ACTIONS_API_KEY:
     raise RuntimeError("ACTIONS_API_KEY is not set. Copy .env.example to .env and set ACTIONS_API_KEY.")
 
 engine = create_engine(DB_URL, future=True)
-DEBUG_LOG_PATH = "/Users/devin.george/retail-db/.cursor/debug-57b5c1.log"
 
 app = FastAPI(
     title="Retail Demo GPT Actions API",
@@ -44,15 +43,6 @@ api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
 
 def require_api_key(x_api_key: str | None = Security(api_key_header)) -> None:
-    # region agent log
-    _debug_log(
-        run_id=f"auth_{uuid.uuid4().hex[:8]}",
-        hypothesis_id="H4",
-        location="api/main.py:require_api_key:entry",
-        message="api key guard invoked",
-        data={"provided": x_api_key is not None},
-    )
-    # endregion
     if not x_api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing API key.")
     if x_api_key != ACTIONS_API_KEY:
@@ -73,21 +63,121 @@ def _fetch_all(query_text: str, params: dict | None = None) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def _debug_log(run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
-    try:
-        payload = {
-            "sessionId": "57b5c1",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-        }
-        with open(DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, separators=(",", ":")) + "\n")
-    except Exception:
-        pass
+_SEARCH_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "for",
+    "in",
+    "on",
+    "of",
+    "to",
+    "can",
+    "you",
+    "we",
+    "have",
+    "has",
+    "where",
+    "find",
+    "looking",
+    "look",
+    "customer",
+    "please",
+    "that",
+    "this",
+    "with",
+    "stock",
+    "our",
+}
+
+_SIZE_ALIASES = {
+    "small": "s",
+    "sm": "s",
+    "medium": "m",
+    "med": "m",
+    "large": "l",
+    "lg": "l",
+    "xlarge": "xl",
+    "xlarge": "xl",
+    "extra": "",
+}
+
+
+def _normalize_query_tokens(raw_query: str) -> list[str]:
+    normalized = re.sub(r"[^a-z0-9]+", " ", raw_query.lower()).strip()
+    tokens: list[str] = []
+    for token in normalized.split():
+        if token in _SEARCH_STOPWORDS:
+            continue
+        mapped = _SIZE_ALIASES.get(token, token)
+        if not mapped:
+            continue
+        tokens.append(mapped)
+    # preserve order but remove duplicates
+    return list(dict.fromkeys(tokens))
+
+
+def _fallback_search_products(q: str, limit: int) -> list[dict]:
+    tokens = _normalize_query_tokens(q)
+    if not tokens:
+        return []
+
+    candidates = _fetch_all(
+        """
+        SELECT
+            product_id, style_id, sku_id, product_name, category, subcategory, brand,
+            color, size, season, msrp::float AS msrp, cost::float AS cost,
+            description, image_url, silhouette, occasion, material, status
+        FROM retail_demo.products
+        WHERE status = 'active'
+        """
+    )
+
+    scored: list[tuple[int, int, dict]] = []
+    for row in candidates:
+        searchable = " ".join(
+            [
+                row["product_name"],
+                row["style_id"],
+                row["sku_id"],
+                row["category"],
+                row["subcategory"],
+                row["brand"],
+                row["color"],
+                row["size"],
+                row["occasion"],
+                row["material"],
+            ]
+        ).lower()
+        searchable_norm = re.sub(r"[^a-z0-9]+", " ", searchable).strip()
+        searchable_tokens = set(searchable_norm.split())
+
+        matched = 0
+        for token in tokens:
+            if token in {"s", "m", "l", "xl"}:
+                if row["size"].lower() == token:
+                    matched += 1
+                continue
+            if token in searchable_tokens:
+                matched += 1
+
+        if matched == 0:
+            continue
+
+        score = matched * 10
+        if q.lower() in row["product_name"].lower():
+            score += 20
+        if row["product_name"].lower() in q.lower():
+            score += 10
+        scored.append((score, matched, row))
+
+    # Require at least two semantic tokens or nearly all tokens.
+    threshold = 2 if len(tokens) >= 2 else 1
+    filtered = [item for item in scored if item[1] >= threshold or item[1] >= len(tokens) - 1]
+    filtered.sort(key=lambda item: (-item[0], item[2]["product_name"], item[2]["color"], item[2]["size"]))
+    return [item[2] for item in filtered[:limit]]
 
 
 class HealthResponse(BaseModel):
@@ -267,7 +357,6 @@ def search_products(
     occasion: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
 ) -> ProductSearchResponse:
-    run_id = f"search_{uuid.uuid4().hex[:8]}"
     params = {
         "q": q,
         "q_pattern": f"%{q}%" if q else None,
@@ -275,53 +364,28 @@ def search_products(
         "occasion": occasion,
         "limit": limit,
     }
-    # region agent log
-    _debug_log(
-        run_id=run_id,
-        hypothesis_id="H1",
-        location="api/main.py:search_products:entry",
-        message="search_products called",
-        data={"q": q, "category": category, "occasion": occasion, "limit": limit},
+    rows = _fetch_all(
+        """
+        SELECT
+            product_id, style_id, sku_id, product_name, category, subcategory, brand,
+            color, size, season, msrp::float AS msrp, cost::float AS cost,
+            description, image_url, silhouette, occasion, material, status
+        FROM retail_demo.products
+        WHERE (CAST(:q AS TEXT) IS NULL OR product_name ILIKE :q_pattern OR style_id ILIKE :q_pattern OR sku_id ILIKE :q_pattern)
+          AND (CAST(:category AS TEXT) IS NULL OR category = :category)
+          AND (CAST(:occasion AS TEXT) IS NULL OR occasion = :occasion)
+          AND status = 'active'
+        ORDER BY category, product_name, color, size
+        LIMIT :limit
+        """,
+        params,
     )
-    # endregion
-    try:
-        rows = _fetch_all(
-            """
-            SELECT
-                product_id, style_id, sku_id, product_name, category, subcategory, brand,
-                color, size, season, msrp::float AS msrp, cost::float AS cost,
-                description, image_url, silhouette, occasion, material, status
-            FROM retail_demo.products
-            WHERE (CAST(:q AS TEXT) IS NULL OR product_name ILIKE :q_pattern OR style_id ILIKE :q_pattern OR sku_id ILIKE :q_pattern)
-              AND (CAST(:category AS TEXT) IS NULL OR category = :category)
-              AND (CAST(:occasion AS TEXT) IS NULL OR occasion = :occasion)
-              AND status = 'active'
-            ORDER BY category, product_name, color, size
-            LIMIT :limit
-            """,
-            params,
-        )
-        # region agent log
-        _debug_log(
-            run_id=run_id,
-            hypothesis_id="H2",
-            location="api/main.py:search_products:after_query",
-            message="search_products query succeeded",
-            data={"row_count": len(rows), "first_product_id": rows[0]["product_id"] if rows else None},
-        )
-        # endregion
+
+    if rows or not q:
         return ProductSearchResponse(products=[ProductRecord(**row) for row in rows])
-    except Exception as exc:
-        # region agent log
-        _debug_log(
-            run_id=run_id,
-            hypothesis_id="H3",
-            location="api/main.py:search_products:exception",
-            message="search_products failed",
-            data={"error_type": type(exc).__name__, "error": str(exc)},
-        )
-        # endregion
-        raise
+
+    fallback_rows = _fallback_search_products(q=q, limit=limit)
+    return ProductSearchResponse(products=[ProductRecord(**row) for row in fallback_rows])
 
 
 @app.get(
