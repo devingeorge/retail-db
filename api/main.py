@@ -215,6 +215,30 @@ class AlternativesResponse(BaseModel):
     alternatives: list[AlternativeOption]
 
 
+class CrossSellOption(BaseModel):
+    relationship_type: str
+    rationale: str | None
+    priority_rank: int
+    sku: str
+    style_id: str
+    style_name: str
+    category: str
+    color_name: str
+    size: str
+    msrp: float
+    store_id: int
+    store_name: str
+    region: str
+    on_hand_units: int
+    available_for_transfer: bool
+    available_online_dc: int
+
+
+class CrossSellResponse(BaseModel):
+    source_style_id: str
+    cross_sells: list[CrossSellOption]
+
+
 class StoreLocationResponse(BaseModel):
     store_id: int
     store_name: str
@@ -947,6 +971,77 @@ def get_style_alternatives(
         options.append(AlternativeOption(**row))
 
     return AlternativesResponse(source_style_id=normalized_style_id, alternatives=options)
+
+
+@app.get(
+    "/styles/{style_id}/cross-sell",
+    dependencies=[Depends(require_api_key)],
+    summary="Find cross-sell styles with inventory for a source style",
+    response_model=CrossSellResponse,
+)
+def get_style_cross_sell(
+    style_id: str,
+    size: str | None = None,
+    preferred_colors: str | None = Query(
+        default=None, description="Comma-separated colors, e.g. Blue,Beige"
+    ),
+    origin_store_id: int | None = None,
+    limit: int = Query(10, ge=1, le=50),
+) -> CrossSellResponse:
+    normalized_style_id = _normalize_style_id(style_id)
+    rows = _fetch_all(
+        """
+        SELECT
+            rel.relationship_type,
+            rel.rationale,
+            rel.priority_rank,
+            s.sku,
+            s.style_id,
+            st.style_name,
+            st.category,
+            s.color_name,
+            s.size,
+            s.msrp,
+            i.store_id,
+            i.store_name,
+            i.region,
+            i.on_hand_units,
+            i.available_for_transfer,
+            i.available_online_dc
+        FROM retail_usecases.style_relationships rel
+        JOIN retail_usecases.skus s ON s.style_id = rel.to_style_id
+        JOIN retail_usecases.styles st ON st.style_id = s.style_id
+        JOIN retail_usecases.inventory i ON i.sku = s.sku
+        WHERE rel.from_style_id = :style_id
+          AND rel.relationship_type = 'cross_sell'
+          AND i.on_hand_units > 0
+          AND (:size IS NULL OR s.size = :size)
+          AND (:origin_store_id IS NULL OR i.store_id = :origin_store_id)
+        ORDER BY
+            rel.priority_rank ASC,
+            i.on_hand_units DESC,
+            i.available_online_dc DESC
+        LIMIT :limit
+        """,
+        {
+            "style_id": normalized_style_id,
+            "size": size,
+            "origin_store_id": origin_store_id,
+            "limit": limit,
+        },
+    )
+
+    preferred_color_set: set[str] | None = None
+    if preferred_colors:
+        preferred_color_set = {color.strip().lower() for color in preferred_colors.split(",") if color.strip()}
+
+    options: list[CrossSellOption] = []
+    for row in rows:
+        if preferred_color_set and row["color_name"].lower() not in preferred_color_set:
+            continue
+        options.append(CrossSellOption(**row))
+
+    return CrossSellResponse(source_style_id=normalized_style_id, cross_sells=options)
 
 
 @app.post(

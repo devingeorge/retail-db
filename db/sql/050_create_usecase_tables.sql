@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS retail_usecases.customer_profiles (
     recent_purchases JSONB NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS retail_usecases.style_relationships (
+    from_style_id TEXT NOT NULL REFERENCES retail_usecases.styles(style_id),
+    to_style_id TEXT NOT NULL REFERENCES retail_usecases.styles(style_id),
+    relationship_type TEXT NOT NULL CHECK (relationship_type IN ('cross_sell')),
+    rationale TEXT,
+    priority_rank INTEGER NOT NULL DEFAULT 1 CHECK (priority_rank > 0),
+    PRIMARY KEY (from_style_id, to_style_id, relationship_type)
+);
+
 CREATE INDEX IF NOT EXISTS idx_usecases_inventory_sku ON retail_usecases.inventory(sku);
 CREATE INDEX IF NOT EXISTS idx_usecases_sales_summary_sku ON retail_usecases.sales_summary(sku);
 CREATE INDEX IF NOT EXISTS idx_usecases_sales_summary_style ON retail_usecases.sales_summary(style_id);
+CREATE INDEX IF NOT EXISTS idx_usecases_style_relationships_from ON retail_usecases.style_relationships(from_style_id);
