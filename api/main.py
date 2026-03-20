@@ -766,6 +766,7 @@ def get_planning_recommendations(
             SELECT
                 'transfer'::text AS action_type,
                 'high'::text AS priority,
+                0::int AS priority_sort,
                 dst.style_id,
                 dst.category,
                 src.store_id AS source_store_id,
@@ -787,6 +788,7 @@ def get_planning_recommendations(
             SELECT
                 'markdown_adjustment'::text AS action_type,
                 'medium'::text AS priority,
+                1::int AS priority_sort,
                 p.style_id,
                 p.category,
                 p.store_id AS source_store_id,
@@ -803,6 +805,7 @@ def get_planning_recommendations(
             SELECT
                 'reorder'::text AS action_type,
                 'high'::text AS priority,
+                0::int AS priority_sort,
                 p.style_id,
                 p.category,
                 NULL::int AS source_store_id,
@@ -815,13 +818,26 @@ def get_planning_recommendations(
             WHERE p.avg_sell_through >= 70
               AND p.avg_wos <= 1.5
         )
-        SELECT * FROM transfer_candidates
-        UNION ALL
-        SELECT * FROM markdown_candidates
-        UNION ALL
-        SELECT * FROM reorder_candidates
+        SELECT
+            action_type,
+            priority,
+            style_id,
+            category,
+            source_store_id,
+            source_store_name,
+            target_store_id,
+            target_store_name,
+            recommended_units,
+            rationale
+        FROM (
+            SELECT * FROM transfer_candidates
+            UNION ALL
+            SELECT * FROM markdown_candidates
+            UNION ALL
+            SELECT * FROM reorder_candidates
+        ) all_recs
         ORDER BY
-            CASE priority WHEN 'high' THEN 0 ELSE 1 END,
+            priority_sort,
             action_type,
             style_id
         LIMIT :limit
